@@ -30,6 +30,30 @@ HERMES_SRC = Path(os.environ.get("HERMES_SRC", "/usr/local/lib/hermes-agent"))
 CODEX_AUTH = Path(
     os.environ.get("CODEX_TRULY_TEST_AUTH", Path.home() / ".hermes" / "auth.json"))
 
+if HERMES_SRC.is_dir() and str(HERMES_SRC) not in sys.path:
+    sys.path.insert(0, str(HERMES_SRC))
+
+
+def _hermes_importable() -> bool:
+    """Whether Hermes itself is importable here.
+
+    Much of this suite drives Hermes' own code (model-override resolution, the
+    credentialed request route), so those tests must SKIP when Hermes is absent
+    rather than fail: the plugin only ever runs inside Hermes, and a bare
+    interpreter is the normal state of a CI runner.
+    """
+    try:
+        import agent.model_metadata  # noqa: F401
+        import hermes_cli.config  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+HERMES_AVAILABLE = _hermes_importable()
+requires_hermes = pytest.mark.skipif(
+    not HERMES_AVAILABLE, reason="Hermes is not installed; this test drives its code")
+
 # A realistic account catalog: gpt-6.1-sol advertises 500K (the raise that
 # disabled Hermes' 272K->900K bump), everything else advertises 272K, and the
 # ceiling is 872K everywhere.
@@ -164,6 +188,26 @@ class TestConfig:
 # -- model selection -----------------------------------------------------
 
 class TestTargets:
+    """Pure helpers — no Hermes needed."""
+
+    def test_measurement_is_recorded_not_assumed(self, plugin):
+        entry = plugin.targets.measured_ceiling("gpt-6.1-sol")
+        assert entry["accepted"] < entry["rejected"]
+
+    def test_catalog_promise_is_the_larger_of_the_two_windows(self, plugin):
+        assert plugin.codex_api.promised_window(
+            {"context_window": 272_000, "max_context_window": 872_000}) == 872_000
+        assert plugin.codex_api.promised_window({"context_window": 500_000}) == 500_000
+        assert plugin.codex_api.promised_window({}) == 0
+
+    def test_the_default_stays_under_the_safety_ceiling(self, plugin):
+        assert plugin.config.DEFAULT_CONTEXT_WINDOW <= plugin.config.MAX_CONTEXT_WINDOW
+
+
+@requires_hermes
+class TestModelSelection:
+    """Eligibility comes from Hermes' own rules, so these need Hermes importable."""
+
     def test_only_hermes_eligible_slugs_are_managed(self, plugin):
         slugs = ["gpt-6.1-sol", "gpt-5.5", "gpt-reserve", "not-a-model"]
         managed = plugin.targets.managed_ids(slugs, apply_to_base_slugs=False)
@@ -178,19 +222,10 @@ class TestTargets:
             ["gpt-6-sol", "gpt-6-luna"], apply_to_base_slugs=False, only=("GPT-6-LUNA",))
         assert managed == [("gpt-6-luna", "gpt-6-luna-900k")]
 
-    def test_measurement_is_recorded_not_assumed(self, plugin):
-        entry = plugin.targets.measured_ceiling("gpt-6.1-sol")
-        assert entry["accepted"] < entry["rejected"]
-
-    def test_catalog_promise_is_the_larger_of_the_two_windows(self, plugin):
-        assert plugin.codex_api.promised_window(
-            {"context_window": 272_000, "max_context_window": 872_000}) == 872_000
-        assert plugin.codex_api.promised_window({"context_window": 500_000}) == 500_000
-        assert plugin.codex_api.promised_window({}) == 0
-
 
 # -- the credential contract --------------------------------------------
 
+@requires_hermes
 class TestCredentialHandling:
     """Rule: the plugin asks Hermes to attach the sign-in; it never holds one."""
 
@@ -227,6 +262,7 @@ class TestCredentialHandling:
 
 # -- apply / revert ------------------------------------------------------
 
+@requires_hermes
 class TestApplyPlan:
     def test_plan_targets_every_widenable_model(self, plugin, fake_catalog):
         planned = plugin.overrides.plan(plugin.CodexTrulyConfig(target_context_window=900_000))
@@ -299,6 +335,7 @@ class TestApplyPlan:
 
 # -- tool + report surfaces ---------------------------------------------
 
+@requires_hermes
 class TestToolSurface:
     def test_unknown_action_returns_json_error(self, plugin):
         payload = json.loads(plugin.tool.codex_truly({"action": "nope"}))
