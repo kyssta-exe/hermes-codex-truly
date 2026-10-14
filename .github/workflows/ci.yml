@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install tooling
+        run: pip install --upgrade pip ruff pytest pyyaml
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Test
+        # Hermes is not installed on CI, so the end-to-end tests skip and only
+        # the unit / contract tests run. That is the intended split: the E2E
+        # asserts behaviour that needs a real Hermes install and a real Codex
+        # sign-in, so it is meaningful only on a developer machine.
+        run: python -m pytest tests/ -v
+
+  validate-plugin:
+    # Runs Hermes' own admission checks (manifest, capability probe, declared
+    # tools/hooks, security scan, no core override) exactly as the plugin
+    # catalog's CI does.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Hermes
+        run: curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+
+      - name: Validate
+        run: hermes plugins validate .

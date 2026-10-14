@@ -1,0 +1,31 @@
+[project]
+name = "hermes-codex-truly"
+version = "1.0.0"
+description = "Give Hermes' ChatGPT/Codex-subscription models the context window the backend actually accepts, and image generation through the same subscription."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "kyssta" }]
+
+# No [build-system] on purpose: a flat directory plugin is loaded as-is, and a
+# buildable member makes PM's uv workspace collide when the same plugin is
+# enabled in two Hermes homes.
+
+# The plugin ships flat, so __init__.py sits at the repository root. pytest walks
+# up from tests/, finds it, and builds a Package node for a directory whose name
+# ("codex-truly") is not a legal Python identifier — it then imports that file as
+# a bare `__init__` with no parent package, so `from . import cli` fails.
+# consider_namespace_packages stops the rootdir being claimed as a package;
+# tests/conftest.py pre-seeds sys.modules so pytest reuses the module it
+# bootstrapped instead of re-importing the plugin root.
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+consider_namespace_packages = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]

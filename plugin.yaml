@@ -1,0 +1,86 @@
+name: codex-truly
+label: Codex Truly
+version: 1.0.0
+manifest_version: 2
+api_version: 1
+license: MIT
+author: kyssta
+description: >
+  Gives ChatGPT/Codex-subscription users running inside Hermes the real usable
+  context window of their Codex models, and wires image generation through the
+  same subscription with no OPENAI_API_KEY.
+
+  The Codex OAuth catalog under-reports what the backend will actually accept:
+  it advertises 272K (or 500K) per model and publishes a 872K ceiling, while the
+  backend accepts ~920K of input for the same slugs. Hermes honours the published
+  number, so a Codex subscriber silently loses 30-80% of their window. This
+  plugin raises the window to a live-verified value through a scoped
+  model_overrides entry (it never patches core), and ships a probe that re-measures
+  the true ceiling against the live API so the number is evidence, not folklore.
+
+  Adds `hermes codex-truly` (status/apply/revert/probe/models/image), a
+  /codex-truly slash command, and a codex_truly tool.
+tags: [codex, openai, oauth, context-window, image-generation, subscription]
+
+# The plugin uses the profile's Codex/ChatGPT sign-in, so it declares it. Hermes
+# then attaches the credential itself through credentialed_provider_request();
+# the plugin never reads auth.json and never holds a token.
+# Allowed origins: chatgpt.com (and api.openai.com, unused here).
+requires_auth:
+  - openai-codex
+
+provides_tools:
+  - codex_truly
+
+config_schema:
+  enabled:
+    type: bool
+    default: true
+    label: Enabled
+    description: >-
+      Let the plugin manage the Codex context window and the Codex image
+      provider. Turning this off leaves any overrides already written in place;
+      run `hermes codex-truly revert` to remove them.
+  target_context_window:
+    type: int
+    default: 900000
+    label: Target context window
+    description: >-
+      Context window to grant each managed Codex model (272000-918000). The
+      default 900000 is the live-verified ceiling with margin; the measured
+      hard limit for gpt-6.1-sol is ~925000, above which the backend refuses
+      the request outright. Values above the 918000 safety cap are clamped.
+  apply_to_base_slugs:
+    type: bool
+    default: false
+    label: Also override base model ids
+    description: >-
+      Hermes deliberately keeps the plain ids (gpt-6.1-sol) on the cheap
+      advertised window and puts the large window behind the explicit -900k
+      variants. Leave this off to keep that opt-in behaviour; turn it on to give
+      the base ids the full window too.
+  provider_keys:
+    type: str
+    default: "openai-codex"
+    label: Provider keys
+    description: >-
+      Comma-separated provider ids whose model_overrides get the larger window.
+      Default covers the built-in Codex OAuth provider; add e.g.
+      "custom:my-codex-proxy" when routing Codex through a custom provider that
+      declares api_mode: codex_responses.
+  ensure_image_provider:
+    type: bool
+    default: true
+    label: Ensure Codex image generation
+    description: >-
+      On apply, select the Codex-backed image provider (core's openai-codex
+      image plugin) for image_generate when no provider is configured yet. An
+      existing explicit choice is never overwritten.
+  models:
+    type: str
+    default: ""
+    label: Models
+    description: >-
+      Comma-separated model ids to manage. Empty (default) manages every model
+      the live Codex catalog exposes that Hermes can widen — currently
+      gpt-6.1-sol, gpt-6-astra, gpt-6-sol, gpt-6-luna and the gpt-5.6 family.
